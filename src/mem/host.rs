@@ -75,18 +75,40 @@ pub(super) unsafe fn allocate_memory(size: usize) -> std::io::Result<*mut core::
         first_error
     );
 
-    if let Ok(ptr) = attempt(
-        PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
-    ) {
-        log!("Mapped guest address space with MAP_NORESERVE.");
+    let ptr = match attempt(
+    PROT_READ | PROT_WRITE,
+    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
+) {
+    Ok(ptr) => {
+        log!("DIAGNOSTIC: MAP_NORESERVE succeeded.");
         return Ok(ptr);
     }
+    Err(error) => {
+        log!("DIAGNOSTIC: MAP_NORESERVE failed: {}", error);
+        error
+    }
+};
 
-    let ptr = attempt(PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE)
-        .or_else(|_| attempt(PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS))
-        // Report the original read-write failure: it is the informative one.
-        .map_err(|_| first_error)?;
+let ptr = match attempt(PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE) {
+    Ok(ptr) => {
+        log!("DIAGNOSTIC: PROT_NONE + MAP_NORESERVE succeeded.");
+        return Ok(ptr);
+    }
+    Err(error) => {
+        log!("DIAGNOSTIC: PROT_NONE + MAP_NORESERVE failed: {}", error);
+
+        match attempt(PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS) {
+            Ok(ptr) => {
+                log!("DIAGNOSTIC: PROT_NONE succeeded.");
+                ptr
+            }
+            Err(error) => {
+                log!("DIAGNOSTIC: PROT_NONE failed: {}", error);
+                return Err(first_error);
+            }
+        }
+    }
+};
 
     if unsafe { mprotect(ptr, size, PROT_READ | PROT_WRITE) } != 0 {
         let error = std::io::Error::last_os_error();
